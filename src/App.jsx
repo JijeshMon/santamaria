@@ -116,7 +116,7 @@ function App() {
                     {/* Bottom Copyright Bar */}
                     <div className="bg-purple-950 py-2 text-center">
                         <p className="text-purple-300 text-xs">
-                            © 2024 Santa Maria Tuition Centre | All Rights Reserved | Empowering Education
+                            © 2026 Santa Maria Tuition Centre | All Rights Reserved | Empowering Education
                         </p>
                     </div>
                 </footer>
