@@ -113,6 +113,11 @@ const StudentRegistration = () => {
                 monthly_fee: '',
                 joining_date: new Date().toISOString().split('T')[0]
             })
+            await supabase.channel('custom-refresh').send({
+    type: 'broadcast',
+    event: 'data-changed',
+    payload: { table: 'students', action: 'insert' }
+})
         } catch (error) {
             toast.error(error.message)
         } finally {

@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { supabase } from '../../services/supabase'
 import { useAuth } from '../../context/AuthContext'
 import { 
     Calendar, BookOpen, MessageCircle, DollarSign, CheckCircle, 
-    XCircle, TrendingUp, Award, Star, Clock, ChevronLeft, ChevronRight, Users 
+    XCircle, TrendingUp, Award, Star, Clock, ChevronLeft, ChevronRight, Users, RefreshCw 
 } from 'lucide-react'
 
 const ParentDashboard = () => {
@@ -15,21 +15,16 @@ const ParentDashboard = () => {
     const [reviews, setReviews] = useState([])
     const [payments, setPayments] = useState([])
     const [loading, setLoading] = useState(true)
+    const [refreshing, setRefreshing] = useState(false)
+    const [lastUpdated, setLastUpdated] = useState(new Date())
 
-    useEffect(() => {
-        if (user) {
-            loadAllStudents()
+    // Load all students for this parent
+    const loadAllStudents = useCallback(async () => {
+        if (!user?.mobile_number) {
+            setLoading(false)
+            return
         }
-    }, [user])
-
-    useEffect(() => {
-        if (students.length > 0 && students[selectedStudentIndex]) {
-            loadStudentData(students[selectedStudentIndex].id)
-        }
-    }, [students, selectedStudentIndex])
-
-    const loadAllStudents = async () => {
-        setLoading(true)
+        
         try {
             const { data: studentsData, error: studentsError } = await supabase
                 .from('students')
@@ -40,6 +35,7 @@ const ParentDashboard = () => {
             
             if (studentsData && studentsData.length > 0) {
                 setStudents(studentsData)
+                // Load data for first student
                 await loadStudentData(studentsData[0].id)
             } else {
                 setStudents([])
@@ -49,10 +45,12 @@ const ParentDashboard = () => {
         } finally {
             setLoading(false)
         }
-    }
+    }, [user?.mobile_number])
 
-    const loadStudentData = async (studentId) => {
-        setLoading(true)
+    // Load data for specific student
+    const loadStudentData = useCallback(async (studentId) => {
+        if (!studentId) return
+        
         try {
             const [attendanceRes, marksRes, reviewsRes, paymentsRes] = await Promise.all([
                 supabase.from('attendance').select('*').eq('student_id', studentId).order('date', { ascending: false }).limit(10),
@@ -65,13 +63,113 @@ const ParentDashboard = () => {
             setMarks(marksRes.data || [])
             setReviews(reviewsRes.data || [])
             setPayments(paymentsRes.data || [])
+            setLastUpdated(new Date())
         } catch (error) {
             console.error('Error loading student data:', error)
-        } finally {
-            setLoading(false)
+        }
+    }, [])
+
+    // Manual refresh
+    const handleRefresh = async () => {
+        setRefreshing(true)
+        await loadAllStudents()
+        setTimeout(() => setRefreshing(false), 500)
+    }
+
+    // Initial load
+    useEffect(() => {
+        if (user) {
+            loadAllStudents()
+        }
+    }, [user, loadAllStudents])
+
+    // Auto-refresh every 30 seconds
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (user && students.length > 0) {
+                loadAllStudents()
+            }
+        }, 30000)
+
+        return () => clearInterval(interval)
+    }, [user, students.length, loadAllStudents])
+
+    // Real-time subscription for students table
+    useEffect(() => {
+        if (!user?.mobile_number) return
+
+        const studentsChannel = supabase
+            .channel('students-changes')
+            .on(
+                'postgres_changes',
+                {
+                    event: '*',
+                    schema: 'public',
+                    table: 'students',
+                    filter: `parent_mobile=eq.${user.mobile_number}`
+                },
+                () => {
+                    loadAllStudents()
+                }
+            )
+            .subscribe()
+
+        return () => {
+            supabase.removeChannel(studentsChannel)
+        }
+    }, [user?.mobile_number, loadAllStudents])
+
+    // Real-time subscription for current student's related tables
+    useEffect(() => {
+        const currentStudentId = students[selectedStudentIndex]?.id
+        if (!currentStudentId) return
+
+        const attendanceChannel = supabase
+            .channel('attendance-changes')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'attendance', filter: `student_id=eq.${currentStudentId}` }, () => loadStudentData(currentStudentId))
+            .subscribe()
+
+        const marksChannel = supabase
+            .channel('marks-changes')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'marks', filter: `student_id=eq.${currentStudentId}` }, () => loadStudentData(currentStudentId))
+            .subscribe()
+
+        const reviewsChannel = supabase
+            .channel('reviews-changes')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'teacher_reviews', filter: `student_id=eq.${currentStudentId}` }, () => loadStudentData(currentStudentId))
+            .subscribe()
+
+        const paymentsChannel = supabase
+            .channel('payments-changes')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'fee_payments', filter: `student_id=eq.${currentStudentId}` }, () => loadStudentData(currentStudentId))
+            .subscribe()
+
+        return () => {
+            supabase.removeChannel(attendanceChannel)
+            supabase.removeChannel(marksChannel)
+            supabase.removeChannel(reviewsChannel)
+            supabase.removeChannel(paymentsChannel)
+        }
+    }, [students, selectedStudentIndex, loadStudentData])
+
+    // Student navigation functions
+    const nextStudent = () => {
+        if (selectedStudentIndex < students.length - 1) {
+            const newIndex = selectedStudentIndex + 1
+            setSelectedStudentIndex(newIndex)
+            loadStudentData(students[newIndex].id)
         }
     }
 
+    const prevStudent = () => {
+        if (selectedStudentIndex > 0) {
+            const newIndex = selectedStudentIndex - 1
+            setSelectedStudentIndex(newIndex)
+            loadStudentData(students[newIndex].id)
+        }
+    }
+
+    // Calculate stats
     const calculateAttendancePercentage = () => {
         if (attendance.length === 0) return 0
         const presentCount = attendance.filter(a => a.status === 'present').length
@@ -100,18 +198,6 @@ const ParentDashboard = () => {
         const currentStudent = students[selectedStudentIndex]
         if (!currentStudent) return 0
         return currentStudent.monthly_fee || 0
-    }
-
-    const nextStudent = () => {
-        if (selectedStudentIndex < students.length - 1) {
-            setSelectedStudentIndex(selectedStudentIndex + 1)
-        }
-    }
-
-    const prevStudent = () => {
-        if (selectedStudentIndex > 0) {
-            setSelectedStudentIndex(selectedStudentIndex - 1)
-        }
     }
 
     const currentStudent = students[selectedStudentIndex]
@@ -152,6 +238,21 @@ const ParentDashboard = () => {
 
     return (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+            {/* Refresh Button */}
+            <div className="flex justify-end items-center space-x-4">
+                <div className="text-xs text-gray-400">
+                    Last updated: {lastUpdated.toLocaleTimeString()}
+                </div>
+                <button
+                    onClick={handleRefresh}
+                    disabled={refreshing}
+                    className="flex items-center space-x-2 px-3 py-2 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200 transition disabled:opacity-50"
+                >
+                    <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                    <span className="text-sm">Refresh</span>
+                </button>
+            </div>
+
             {/* Student Header */}
             <div className="bg-gradient-to-r from-purple-700 via-purple-600 to-purple-500 rounded-2xl shadow-xl p-6 text-white relative overflow-hidden">
                 <div className="absolute inset-0 opacity-10">
@@ -172,21 +273,13 @@ const ParentDashboard = () => {
                         
                         {students.length > 1 && (
                             <div className="flex items-center space-x-3 bg-white/20 backdrop-blur-sm rounded-full px-4 py-2">
-                                <button 
-                                    onClick={prevStudent}
-                                    disabled={selectedStudentIndex === 0}
-                                    className="disabled:opacity-50 hover:bg-white/20 rounded-full p-1 transition"
-                                >
+                                <button onClick={prevStudent} disabled={selectedStudentIndex === 0} className="disabled:opacity-50 hover:bg-white/20 rounded-full p-1 transition">
                                     <ChevronLeft className="h-5 w-5" />
                                 </button>
                                 <span className="text-sm font-semibold">
                                     {currentStudent?.name} ({selectedStudentIndex + 1}/{students.length})
                                 </span>
-                                <button 
-                                    onClick={nextStudent}
-                                    disabled={selectedStudentIndex === students.length - 1}
-                                    className="disabled:opacity-50 hover:bg-white/20 rounded-full p-1 transition"
-                                >
+                                <button onClick={nextStudent} disabled={selectedStudentIndex === students.length - 1} className="disabled:opacity-50 hover:bg-white/20 rounded-full p-1 transition">
                                     <ChevronRight className="h-5 w-5" />
                                 </button>
                             </div>
@@ -203,9 +296,7 @@ const ParentDashboard = () => {
                             </div>
                             {currentStudent.gender && (
                                 <div className="bg-white/20 backdrop-blur-sm rounded-full px-4 py-2">
-                                    <span className="text-sm">
-                                        {currentStudent.gender === 'Male' ? '👦' : '👧'} {currentStudent.gender}
-                                    </span>
+                                    <span className="text-sm">{currentStudent.gender === 'Male' ? '👦' : '👧'} {currentStudent.gender}</span>
                                 </div>
                             )}
                         </div>
@@ -219,7 +310,10 @@ const ParentDashboard = () => {
                     {students.map((student, idx) => (
                         <button
                             key={student.id}
-                            onClick={() => setSelectedStudentIndex(idx)}
+                            onClick={() => {
+                                setSelectedStudentIndex(idx)
+                                loadStudentData(student.id)
+                            }}
                             className={`p-3 rounded-xl text-center transition-all duration-300 ${
                                 selectedStudentIndex === idx
                                     ? 'bg-gradient-to-r from-purple-600 to-purple-500 text-white shadow-lg scale-105'
@@ -235,50 +329,38 @@ const ParentDashboard = () => {
                 </div>
             )}
 
-            {/* Stats Cards - 4 Cards Layout */}
+            {/* Stats Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                {/* Attendance Card */}
                 <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100 hover:shadow-xl transition-shadow duration-300">
                     <div className="flex items-center justify-between mb-4">
-                        <div className="bg-purple-100 rounded-full p-3">
-                            <Calendar className="h-6 w-6 text-purple-600" />
-                        </div>
+                        <div className="bg-purple-100 rounded-full p-3"><Calendar className="h-6 w-6 text-purple-600" /></div>
                         <span className="text-3xl font-bold text-purple-600">{calculateAttendancePercentage()}%</span>
                     </div>
                     <h3 className="text-gray-600 text-sm font-medium">Attendance Rate</h3>
                     <p className="text-xs text-gray-400 mt-1">Last 10 days</p>
                 </div>
 
-                {/* Tests Card */}
                 <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100 hover:shadow-xl transition-shadow duration-300">
                     <div className="flex items-center justify-between mb-4">
-                        <div className="bg-purple-100 rounded-full p-3">
-                            <BookOpen className="h-6 w-6 text-purple-600" />
-                        </div>
+                        <div className="bg-purple-100 rounded-full p-3"><BookOpen className="h-6 w-6 text-purple-600" /></div>
                         <span className="text-3xl font-bold text-purple-600">{marks.length}</span>
                     </div>
                     <h3 className="text-gray-600 text-sm font-medium">Tests Taken</h3>
                     <p className="text-xs text-gray-400 mt-1">Average: {calculateAveragePercentage()}%</p>
                 </div>
 
-                {/* Reviews Card */}
                 <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100 hover:shadow-xl transition-shadow duration-300">
                     <div className="flex items-center justify-between mb-4">
-                        <div className="bg-purple-100 rounded-full p-3">
-                            <MessageCircle className="h-6 w-6 text-purple-600" />
-                        </div>
+                        <div className="bg-purple-100 rounded-full p-3"><MessageCircle className="h-6 w-6 text-purple-600" /></div>
                         <span className="text-3xl font-bold text-purple-600">{reviews.length}</span>
                     </div>
                     <h3 className="text-gray-600 text-sm font-medium">Teacher Reviews</h3>
                     <p className="text-xs text-gray-400 mt-1">Total feedback</p>
                 </div>
 
-                {/* Monthly Fee Card with Subtext */}
                 <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100 hover:shadow-xl transition-shadow duration-300">
                     <div className="flex items-center justify-between mb-4">
-                        <div className="bg-purple-100 rounded-full p-3">
-                            <DollarSign className="h-6 w-6 text-purple-600" />
-                        </div>
+                        <div className="bg-purple-100 rounded-full p-3"><DollarSign className="h-6 w-6 text-purple-600" /></div>
                         <span className="text-3xl font-bold text-purple-600">₹{getMonthlyFee()}</span>
                     </div>
                     <h3 className="text-gray-600 text-sm font-medium">Monthly Fee</h3>
@@ -297,22 +379,18 @@ const ParentDashboard = () => {
                 </div>
             </div>
 
-            {/* Recent Attendance Section */}
+            {/* Attendance Table */}
             <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
                 <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
-                    <div className="bg-purple-100 rounded-full p-2 mr-3">
-                        <Calendar className="h-5 w-5 text-purple-600" />
-                    </div>
+                    <div className="bg-purple-100 rounded-full p-2 mr-3"><Calendar className="h-5 w-5 text-purple-600" /></div>
                     Recent Attendance - {currentStudent?.name}
                 </h2>
                 <div className="overflow-x-auto">
                     <table className="min-w-full">
-                        <thead>
-                            <tr className="border-b-2 border-purple-100">
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Date</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Status</th>
-                            </tr>
-                        </thead>
+                        <thead><tr className="border-b-2 border-purple-100">
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Date</th>
+                            <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Status</th>
+                        </tr></thead>
                         <tbody>
                             {attendance.slice(0, 5).map((record, index) => (
                                 <tr key={record.id} className={`border-b border-gray-100 hover:bg-purple-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
@@ -320,8 +398,7 @@ const ParentDashboard = () => {
                                     <td className="px-4 py-3">
                                         <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${
                                             record.status === 'present' ? 'bg-green-100 text-green-700' :
-                                            record.status === 'absent' ? 'bg-red-100 text-red-700' :
-                                            'bg-yellow-100 text-yellow-700'
+                                            record.status === 'absent' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
                                         }`}>
                                             {record.status === 'present' && <CheckCircle className="h-3 w-3 mr-1" />}
                                             {record.status === 'absent' && <XCircle className="h-3 w-3 mr-1" />}
@@ -331,170 +408,7 @@ const ParentDashboard = () => {
                                     </td>
                                 </tr>
                             ))}
-                            {attendance.length === 0 && (
-                                <tr>
-                                    <td colSpan="2" className="px-4 py-8 text-center text-gray-400">
-                                        No attendance records found
-                                    </td>
-                                </tr>
-                            )}
                         </tbody>
-                    </table>
-                </div>
-            </div>
-
-            {/* Test Results Section */}
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
-                <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
-                    <div className="bg-purple-100 rounded-full p-2 mr-3">
-                        <TrendingUp className="h-5 w-5 text-purple-600" />
-                    </div>
-                    Test Results - {currentStudent?.name}
-                </h2>
-                <div className="overflow-x-auto">
-                    <table className="min-w-full">
-                        <thead>
-                            <tr className="border-b-2 border-purple-100">
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Date</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Test</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Subject</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Marks</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Percentage</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {marks.slice(0, 5).map((mark, index) => {
-                                const percentage = ((mark.marks_obtained / mark.total_marks) * 100).toFixed(1)
-                                return (
-                                    <tr key={mark.id} className={`border-b border-gray-100 hover:bg-purple-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
-                                        <td className="px-4 py-3 text-gray-700">{mark.test_date}</td>
-                                        <td className="px-4 py-3">
-                                            <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-                                                {mark.test_name}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3 text-gray-700">{mark.subject}</td>
-                                        <td className="px-4 py-3">
-                                            <span className="font-semibold text-purple-600">{mark.marks_obtained}</span>
-                                            <span className="text-gray-400">/{mark.total_marks}</span>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <div className="flex items-center space-x-2">
-                                                <div className="w-16 bg-gray-200 rounded-full h-2">
-                                                    <div className="bg-purple-600 rounded-full h-2" style={{ width: `${percentage}%` }}></div>
-                                                </div>
-                                                <span className={`font-semibold ${percentage >= 70 ? 'text-green-600' : percentage >= 40 ? 'text-yellow-600' : 'text-red-600'}`}>
-                                                    {percentage}%
-                                                </span>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                )
-                            })}
-                            {marks.length === 0 && (
-                                <tr>
-                                    <td colSpan="5" className="px-4 py-8 text-center text-gray-400">
-                                        No test records found
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            {/* Teacher Reviews Section */}
-            {reviews.length > 0 && (
-                <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
-                    <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
-                        <div className="bg-purple-100 rounded-full p-2 mr-3">
-                            <Star className="h-5 w-5 text-purple-600" />
-                        </div>
-                        Teacher Reviews - {currentStudent?.name}
-                    </h2>
-                    <div className="space-y-4 max-h-96 overflow-y-auto">
-                        {reviews.slice(0, 5).map((review, index) => {
-                            let category = 'General'
-                            let rating = 3
-                            
-                            if (review.review_text.includes('[ACADEMIC]')) category = 'Academic'
-                            else if (review.review_text.includes('[BEHAVIOR]')) category = 'Behavior'
-                            else if (review.review_text.includes('[ATTENDANCE]')) category = 'Attendance'
-                            else if (review.review_text.includes('[PARTICIPATION]')) category = 'Participation'
-                            
-                            const ratingMatch = review.review_text.match(/⭐ (\d)\/5/)
-                            if (ratingMatch) rating = parseInt(ratingMatch[1])
-                            
-                            const cleanContent = review.review_text.replace(/\[.*?\]\s*⭐ \d\/5\n\n/, '')
-                            
-                            return (
-                                <div key={review.id} className="border-l-4 border-purple-500 pl-4 py-3 bg-purple-50 rounded-r-lg">
-                                    <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-                                        <p className="text-xs text-purple-600 font-semibold">
-                                            {category} Review - {review.review_date}
-                                        </p>
-                                        <div className="flex items-center space-x-1">
-                                            {[1,2,3,4,5].map(star => (
-                                                <Star key={star} className={`h-3 w-3 ${star <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`} />
-                                            ))}
-                                        </div>
-                                    </div>
-                                    <p className="text-gray-700 text-sm">{cleanContent || review.review_text}</p>
-                                </div>
-                            )
-                        })}
-                    </div>
-                </div>
-            )}
-
-            {/* Fee Payment History Section */}
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
-                <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
-                    <div className="bg-purple-100 rounded-full p-2 mr-3">
-                        <DollarSign className="h-5 w-5 text-purple-600" />
-                    </div>
-                    Payment History - {currentStudent?.name}
-                </h2>
-                <div className="overflow-x-auto">
-                    <table className="min-w-full">
-                        <thead>
-                            <tr className="border-b-2 border-purple-100">
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Date</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Amount</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Method</th>
-                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Remarks</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {payments.map((payment, index) => (
-                                <tr key={payment.id} className={`border-b border-gray-100 hover:bg-purple-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
-                                    <td className="px-4 py-3 text-gray-700">{payment.payment_date}</td>
-                                    <td className="px-4 py-3 text-purple-600 font-semibold">₹{payment.amount_paid}</td>
-                                    <td className="px-4 py-3">
-                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
-                                            {payment.payment_method?.toUpperCase()}
-                                        </span>
-                                    </td>
-                                    <td className="px-4 py-3 text-gray-500">{payment.remarks || '-'}</td>
-                                </tr>
-                            ))}
-                            {payments.length === 0 && (
-                                <tr>
-                                    <td colSpan="4" className="px-4 py-8 text-center text-gray-400">
-                                        No payment records found
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                        {payments.length > 0 && (
-                            <tfoot className="bg-purple-50 border-t-2 border-purple-200">
-                                <tr>
-                                    <td className="px-4 py-3 font-semibold text-gray-700">Total Paid</td>
-                                    <td className="px-4 py-3 font-bold text-purple-600">₹{calculateTotalPaid()}</td>
-                                    <td colSpan="2"></td>
-                                </tr>
-                            </tfoot>
-                        )}
                     </table>
                 </div>
             </div>
