@@ -35,7 +35,6 @@ const ParentDashboard = () => {
             
             if (studentsData && studentsData.length > 0) {
                 setStudents(studentsData)
-                // Load data for first student
                 await loadStudentData(studentsData[0].id)
             } else {
                 setStudents([])
@@ -379,7 +378,7 @@ const ParentDashboard = () => {
                 </div>
             </div>
 
-            {/* Attendance Table */}
+            {/* Recent Attendance Section */}
             <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
                 <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
                     <div className="bg-purple-100 rounded-full p-2 mr-3"><Calendar className="h-5 w-5 text-purple-600" /></div>
@@ -408,7 +407,164 @@ const ParentDashboard = () => {
                                     </td>
                                 </tr>
                             ))}
+                            {attendance.length === 0 && (
+                                <tr>
+                                    <td colSpan="2" className="px-4 py-8 text-center text-gray-400">
+                                        No attendance records found
+                                    </td>
+                                </tr>
+                            )}
                         </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Test Results Section */}
+            <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
+                <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
+                    <div className="bg-purple-100 rounded-full p-2 mr-3"><TrendingUp className="h-5 w-5 text-purple-600" /></div>
+                    Test Results - {currentStudent?.name}
+                </h2>
+                <div className="overflow-x-auto">
+                    <table className="min-w-full">
+                        <thead>
+                            <tr className="border-b-2 border-purple-100">
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Date</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Test</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Subject</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Marks</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Percentage</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {marks.slice(0, 5).map((mark, index) => {
+                                const percentage = ((mark.marks_obtained / mark.total_marks) * 100).toFixed(1)
+                                return (
+                                    <tr key={mark.id} className={`border-b border-gray-100 hover:bg-purple-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
+                                        <td className="px-4 py-3 text-gray-700">{mark.test_date}</td>
+                                        <td className="px-4 py-3">
+                                            <span className="inline-flex px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                                                {mark.test_name}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3 text-gray-700">{mark.subject}</td>
+                                        <td className="px-4 py-3">
+                                            <span className="font-semibold text-purple-600">{mark.marks_obtained}</span>
+                                            <span className="text-gray-400">/{mark.total_marks}</span>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="flex items-center space-x-2">
+                                                <div className="w-16 bg-gray-200 rounded-full h-2">
+                                                    <div className="bg-purple-600 rounded-full h-2" style={{ width: `${percentage}%` }}></div>
+                                                </div>
+                                                <span className={`font-semibold ${percentage >= 70 ? 'text-green-600' : percentage >= 40 ? 'text-yellow-600' : 'text-red-600'}`}>
+                                                    {percentage}%
+                                                </span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )
+                            })}
+                            {marks.length === 0 && (
+                                <tr>
+                                    <td colSpan="5" className="px-4 py-8 text-center text-gray-400">
+                                        No test records found
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Teacher Reviews Section */}
+            {reviews.length > 0 && (
+                <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
+                    <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
+                        <div className="bg-purple-100 rounded-full p-2 mr-3"><Star className="h-5 w-5 text-purple-600" /></div>
+                        Teacher Reviews - {currentStudent?.name}
+                    </h2>
+                    <div className="space-y-4 max-h-96 overflow-y-auto">
+                        {reviews.slice(0, 5).map((review, index) => {
+                            let category = 'General'
+                            let rating = 3
+                            
+                            if (review.review_text.includes('[ACADEMIC]')) category = 'Academic'
+                            else if (review.review_text.includes('[BEHAVIOR]')) category = 'Behavior'
+                            else if (review.review_text.includes('[ATTENDANCE]')) category = 'Attendance'
+                            else if (review.review_text.includes('[PARTICIPATION]')) category = 'Participation'
+                            
+                            const ratingMatch = review.review_text.match(/⭐ (\d)\/5/)
+                            if (ratingMatch) rating = parseInt(ratingMatch[1])
+                            
+                            const cleanContent = review.review_text.replace(/\[.*?\]\s*⭐ \d\/5\n\n/, '')
+                            
+                            return (
+                                <div key={review.id} className="border-l-4 border-purple-500 pl-4 py-3 bg-purple-50 rounded-r-lg">
+                                    <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                                        <p className="text-xs text-purple-600 font-semibold">
+                                            {category} Review - {review.review_date}
+                                        </p>
+                                        <div className="flex items-center space-x-1">
+                                            {[1,2,3,4,5].map(star => (
+                                                <Star key={star} className={`h-3 w-3 ${star <= rating ? 'text-yellow-400 fill-yellow-400' : 'text-gray-300'}`} />
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <p className="text-gray-700 text-sm">{cleanContent || review.review_text}</p>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+            )}
+
+            {/* Fee Payment History Section */}
+            <div className="bg-white rounded-2xl shadow-lg p-6 border border-purple-100">
+                <h2 className="text-xl font-bold mb-6 flex items-center text-gray-800">
+                    <div className="bg-purple-100 rounded-full p-2 mr-3"><DollarSign className="h-5 w-5 text-purple-600" /></div>
+                    Payment History - {currentStudent?.name}
+                </h2>
+                <div className="overflow-x-auto">
+                    <table className="min-w-full">
+                        <thead>
+                            <tr className="border-b-2 border-purple-100">
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Date</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Amount</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Method</th>
+                                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-600">Remarks</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {payments.map((payment, index) => (
+                                <tr key={payment.id} className={`border-b border-gray-100 hover:bg-purple-50 transition-colors ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
+                                    <td className="px-4 py-3 text-gray-700">{payment.payment_date}</td>
+                                    <td className="px-4 py-3 text-purple-600 font-semibold">₹{payment.amount_paid}</td>
+                                    <td className="px-4 py-3">
+                                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-700">
+                                            {payment.payment_method?.toUpperCase()}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 text-gray-500">{payment.remarks || '-'}</td>
+                                </tr>
+                            ))}
+                            {payments.length === 0 && (
+                                <tr>
+                                    <td colSpan="4" className="px-4 py-8 text-center text-gray-400">
+                                        No payment records found
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                        {payments.length > 0 && (
+                            <tfoot className="bg-purple-50 border-t-2 border-purple-200">
+                                <tr>
+                                    <td className="px-4 py-3 font-semibold text-gray-700">Total Paid</td>
+                                    <td className="px-4 py-3 font-bold text-purple-600">₹{calculateTotalPaid()}</td>
+                                    <td colSpan="2"></td>
+                                </tr>
+                            </tfoot>
+                        )}
                     </table>
                 </div>
             </div>
