@@ -67,7 +67,7 @@ const Login = () => {
                                 type="tel"
                                 value={mobileNumber}
                                 onChange={(e) => setMobileNumber(e.target.value)}
-                                placeholder="7356225520"
+                                placeholder="Registered Mobile Number"
                                 className="w-full pl-10 pr-3 py-3 border border-gray-200 rounded-lg focus:outline-none focus:border-purple-400 focus:ring-2 focus:ring-purple-200 transition-all duration-300"
                                 required
                             />
@@ -100,11 +100,11 @@ const Login = () => {
                     </button>
                 </form>
 
-                <div className="mt-6 p-3 bg-purple-50 rounded-lg border border-purple-100">
+                {/* <div className="mt-6 p-3 bg-purple-50 rounded-lg border border-purple-100">
                     <p className="text-xs text-purple-700 text-center">
                         <span className="font-semibold">Demo Access:</span> Teacher: 7356225520 / password123
                     </p>
-                </div>
+                </div> */}
             </div>
         </div>
     )
